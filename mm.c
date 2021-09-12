@@ -48,7 +48,7 @@ ALIGN(size)는 주어진 size의 수에서 가장 가까운 ALIGNMENT 배�
 즉, size의 수를 ALIGNMENT 배수로 바꿔 준다. 
 하위 3bit와 일치하지 않는 부분만을 반환해서 ALIGNMENT 크기를 맞춘다.
 */
-#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
+#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
 
 /*
 주어진 size_t의 크기만큼 정렬(ALIGN)하고, 이 값을 SIZE_T_SIZE로 정의한다.
@@ -88,8 +88,62 @@ ALIGN(size)는 주어진 size의 수에서 가장 가까운 ALIGNMENT 배�
 driver가 새로운 trace를 실행할 때마다, mm_init 함수를 호출함으로써 heap을 빈 heap으로 리셋시킨다.
 */
 static char *heap_listp;
-static void *extend_heap(size_t);
-static void *coalesce(void *);
+
+static void *coalesce(void *bp){
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // 이전 블록의 할당 여부 0 = no, 1 = yes
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp))); //다음 블록의 할당여부
+    size_t size = GET_SIZE(HDRP(bp)); //현재블럭의 사이즈
+
+    //case 1 : 이전블럭, 다음 블럭 최하위 bit 둘다 1 할당
+    //블럭 병합없이 bp return
+    if (prev_alloc && next_alloc){
+        return bp;
+    }
+
+    //case 2 : 이전 블럭 최하위 bit 1(할당), 다음 블럭 최하위 bit 0(비할당)
+    //다음 블럭과 병합한 뒤 bp return
+    else if (prev_alloc && !next_alloc){
+        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+        PUT(HDRP(bp), PACK(size, 0));
+        PUT(FTRP(bp), PACK(size, 0));
+    }
+
+    //case 3 : 아전 블럭 최하위 bit0, 다음 블럭 최하위 bit 1
+    //dlwjs qmffjrrhk qudgkqgks enl tofhdns bp return 
+    else if (!prev_alloc && next_alloc){
+        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+        PUT(FTRP(bp), PACK(size, 0));
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        bp = PREV_BLKP(bp);
+    }
+    
+    //case 4 : 이전 블럭 최하위 bit 0, 다음 블럭 최하위 bit 0 
+    //이전 블럭, 현재블럭, 다음블럭 모두 병합한 뒤 새로운 bp return
+    else{
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+        bp = PREV_BLKP(bp);
+    }
+    return bp;
+}
+
+//힙이 초기화 될 때, mm_malloc이 적당한 fit을 찾지 못했을 때
+static void *extend_heap(size_t words){
+    char *bp;
+    size_t size;
+    //요청한 크기를 인접 2워드의 배수로 반올림하며,
+    //그 후에 메모리 시스템으로부터 추가적인 힙 공간 요청
+    size = (words % 2) ? (words + 1) * WSIZE : words*WSIZE;
+    if((long)(bp = mem_sbrk(size)) == -1)
+        return NULL;
+
+    PUT(HDRP(bp), PACK(size, 0));//free block header
+    PUT(FTRP(bp), PACK(size, 0));//free bolck footer
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0,1));//new epilogue header
+
+    return coalesce(bp);
+}
 
 int mm_init(void)
 {   
@@ -110,69 +164,13 @@ int mm_init(void)
     return 0;
 }
 
-//힙이 초기화 될 때, mm_malloc이 적당한 fit을 찾지 못했을 때
-static void *extend_heap(size_t words){
-    char *bp;
-    size_t size;
-    //요청한 크기를 인접 2워드의 배수로 반올림하며,
-    //그 후에 메모리 시스템으로부터 추가적인 힙 공간 요청
-    size = (words % 2) ? (words + 1) * WSIZE : words*WSIZE;
-    if((long)(bp = mem_sbrk(size)) == -1)
-        return NULL;
-
-    PUT(HDRP(bp), PACK(size, 0));//free block header
-    PUT(FTRP(bp), PACK(size, 0));//free bolck footer
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0,1));//new epilogue header
-
-    return coalesce(bp);
-}
-
-static void *coalesce(void *bp){
-    size_t pre_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // 이전 블록의 할당 여부 0 = no, 1 = yes
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp))); //다음 블록의 할당여부
-    size_t size = GET_SIZE(HDRP(bp)); //현재블럭의 사이즈
-
-    //case 1 : 이전블럭, 다음 블럭 최하위 bit 둘다 1 할당
-    //블럭 병합없이 bp return
-    if (pre_alloc && next_alloc){
-        return bp;
-    }
-
-    //case 2 : 이전 블럭 최하위 bit 1(할당), 다음 블럭 최하위 bit 0(비할당)
-    //다음 블럭과 병합한 뒤 bp return
-    else if (pre_alloc && !next_alloc){
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(bp), PACK(size, 0));
-        PUT(FTRP(bp), PACK(size, 0));
-    }
-
-    //case 3 : 아전 블럭 최하위 bit0, 다음 블럭 최하위 bit 1
-    //dlwjs qmffjrrhk qudgkqgks enl tofhdns bp return 
-    else if (!pre_alloc && next_alloc){
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-    }
-    
-    //case 4 : 이전 블럭 최하위 bit 0, 다음 블럭 최하위 bit 0 
-    //이전 블럭, 현재블럭, 다음블럭 모두 병합한 뒤 새로운 bp return
-    else{
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(HDRP(NEXT_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-    }
-    return bp;
-}
-
 static void place(void *bp, size_t asize){
     size_t csize = GET_SIZE(HDRP(bp));
 
     //배치 후에 이 블록의 나머지가 최소블록 크기와 같거나 크다면,
     //진행해서 블록을 분할해야한다.
 
-    if((csize - asize) >= (2*DSIZE)){
+    if((csize - asize) >= (2 * DSIZE)){
         //새롭게 할당 된 블록을 배치
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
@@ -186,6 +184,17 @@ static void place(void *bp, size_t asize){
     }
 }
 
+static void *find_fit(size_t asize){
+    void *bp;
+
+    for (bp = heap_listp ; GET_SIZE(HDRP(bp))>0 ; bp = NEXT_BLKP(bp)){
+        if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
+            return bp;
+    }
+
+    return NULL; //맞는게 없음
+}
+
 /* 
  * mm_malloc - Allocate a block by incrementing the brk pointer.
  *     Always allocate a block whose size is a multiple of the alignment.
@@ -196,17 +205,17 @@ malloc 함수는 최소의 데이터 크기가 할당된 블록의 포인�
 표준 c 라이브러리 malloc 은 항상 8바이트로 정렬된 payload 포인터를 반환하므로, 
 마찬가지로 구현된 malloc도 항상 8바이트로 정렬된 포인터를 반환해야 한다.
 */
-void *mm_malloc(size_t size)
-{
-    int newsize = ALIGN(size + SIZE_T_SIZE);
-    void *p = mem_sbrk(newsize);
-    if (p == (void *)-1)
-	return NULL;
-    else {
-        *(size_t *)p = size;
-        return (void *)((char *)p + SIZE_T_SIZE);
-    }
-}
+// void *mm_malloc(size_t size)
+// {
+// //     int newsize = ALIGN(size + SIZE_T_SIZE);
+// //     void *p = mem_sbrk(newsize);
+// //     if (p == (void *)-1)
+// // 	return NULL;
+// //     else {
+// //         *(size_t *)p = size;
+// //         return (void *)((char *)p + SIZE_T_SIZE);
+// //     }
+// // }
 //     size_t asize;
 //     size_t extendsize;
 //     char *bp;
@@ -220,7 +229,7 @@ void *mm_malloc(size_t size)
 //     if(size <= DSIZE)
 //         asize = 2 * DSIZE;
 //     else//8바이트 넘는 요청 : 오버헤드 바이트 내에 더해주고 인접 8의 배수로 반올림
-//         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)/DSIZE));
+//         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
 
 //     //적절한 가용블록을 가용리스트에서 검색
 //     if((bp == find_fit(asize)) != NULL){
@@ -234,19 +243,61 @@ void *mm_malloc(size_t size)
 //     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
 //         return NULL;
 //     place(bp, asize);
+//     return bp;
 // }
+void *mm_malloc(size_t size)
+{
+    // int newsize = ALIGN(size + SIZE_T_SIZE);
+    // void *p = mem_sbrk(newsize);
+    // if (p == (void *)-1)
+    // return NULL;
+    // else {
+    //     *(size_t *)p = size;
+    //     return (void *)((char *)p + SIZE_T_SIZE);
+    // }
+    size_t asize;
+    size_t extendsize;
+    char *bp;
 
-// /*
-//  * mm_free - Freeing a block does nothing.
-//  */
-// /*
-// free 함수는 ptr이 가리키는 블록을 가용공간으로 만든다. 
-// 이 함수는 아무것도 반환하지 않는다. 
-// malloc, calloc, realloc 함수에 의해 반환되어진 포인터이면서 
-// free에 의해 호출되어지지 않은 인자를 넘겨받아야만 free함수는 함수 기능을 실행한다.
-// free(NULL)은 아무런 기능도 하지 않는다.
-// */
+    // size 0인 경우 제외
+    if (size == 0)
+        return NULL;
+
+    // size를 조정해주기! header, footer를 위한 8바이트, 그리고 기본 2와드 이므로 8바이트
+    if (size <= DSIZE)
+        asize = 2 * DSIZE;
+    else
+        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
+
+    // find_fit 해서 적절한 곳에 메모리 심기
+    if ((bp = find_fit(asize)) != NULL)
+    {
+        place(bp, asize);
+        return bp;
+    }
+
+    // fit이 없다면
+    extendsize = MAX(asize, CHUNKSIZE);
+    if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
+        return NULL;
+    place(bp, asize);
+    return bp;
+}
+
+/*
+ * mm_free - Freeing a block does nothing.
+ */
+/*
+free 함수는 ptr이 가리키는 블록을 가용공간으로 만든다. 
+이 함수는 아무것도 반환하지 않는다. 
+malloc, calloc, realloc 함수에 의해 반환되어진 포인터이면서 
+free에 의해 호출되어지지 않은 인자를 넘겨받아야만 free함수는 함수 기능을 실행한다.
+free(NULL)은 아무런 기능도 하지 않는다.
+*/
 void mm_free(void *ptr){
+
+    // if(!ptr) return;
+
     size_t size = GET_SIZE(HDRP(ptr)); // ptr헤더에서 block사이즈를 읽어옴
 
     //실제로 데이터를 지우는 것이 아니라 헤더와 풋터의 최하위 1(할당된상태)만을 수정
@@ -286,17 +337,3 @@ void *mm_realloc(void *ptr, size_t size){
     mm_free(oldptr);
     return newptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
