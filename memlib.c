@@ -14,6 +14,23 @@
 #include "memlib.h"
 #include "config.h"
 
+/*
+ - void *mem_void(int incr) : incr 바이트만큼 힙을 확장한다.
+    incr 는 0이 아닌 양의 정수이고, 
+    이 함수는 새롭게 할당된 heap 영역의 첫 번째 바이트에 대한 generic 포인터를 반환한다. 
+    mem_sbrk의 인자는 양의 정수인 것만 제외하면 Unix sbrk 함수와 동일하다.
+    
+ - void *mem_heap_lo(void) : 힙에서 첫 번째 바이트에 대한 generic pointer를 반환.
+ 
+ - void *mem_heap_hi(void) : 힙에서 마지막 바이트에 대한 generic pointer를 반환.
+ 
+ - size_t mem_heapsize(void) : 바이트로 된 힙의 현재 크기를 반환.
+ 
+ - size_t mem_pagesize(void) : 바이트로 표현되는 시스템 페이지의 크기를 반환.
+ (4K on Linux systems)
+
+*/
+
 /* private variables */
 static char *mem_start_brk;  /* points to first byte of heap */
 static char *mem_brk;        /* points to last byte of heap */
