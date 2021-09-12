@@ -205,84 +205,47 @@ malloc 함수는 최소의 데이터 크기가 할당된 블록의 포인�
 표준 c 라이브러리 malloc 은 항상 8바이트로 정렬된 payload 포인터를 반환하므로, 
 마찬가지로 구현된 malloc도 항상 8바이트로 정렬된 포인터를 반환해야 한다.
 */
-// void *mm_malloc(size_t size)
-// {
-// //     int newsize = ALIGN(size + SIZE_T_SIZE);
-// //     void *p = mem_sbrk(newsize);
-// //     if (p == (void *)-1)
-// // 	return NULL;
-// //     else {
-// //         *(size_t *)p = size;
-// //         return (void *)((char *)p + SIZE_T_SIZE);
-// //     }
-// // }
-//     size_t asize;
-//     size_t extendsize;
-//     char *bp;
-
-//     if (size == 0)
-//         return NULL;
-    
-//     //최소 16바이트 크기의 블록 구성
-//     //8바이트는 정렬요건 만족시키기 위해
-//     //추가적인 8바이트는 헤더와 풋터 오버헤드를 위해
-//     if(size <= DSIZE)
-//         asize = 2 * DSIZE;
-//     else//8바이트 넘는 요청 : 오버헤드 바이트 내에 더해주고 인접 8의 배수로 반올림
-//         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
-
-//     //적절한 가용블록을 가용리스트에서 검색
-//     if((bp == find_fit(asize)) != NULL){
-//         place(bp, asize);
-//         //맞는 블록 찾으면 할당기는 요청한 블록 배치하고, 옵셥으로 초과부분을 분할
-//         return bp;
-//     }
-    
-//     // 힙을 새로운 가용부분으로 확장
-//     extendsize = MAX(asize, CHUNKSIZE);
-//     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
-//         return NULL;
-//     place(bp, asize);
-//     return bp;
-// }
 void *mm_malloc(size_t size)
 {
-    // int newsize = ALIGN(size + SIZE_T_SIZE);
-    // void *p = mem_sbrk(newsize);
-    // if (p == (void *)-1)
-    // return NULL;
-    // else {
-    //     *(size_t *)p = size;
-    //     return (void *)((char *)p + SIZE_T_SIZE);
-    // }
+//     int newsize = ALIGN(size + SIZE_T_SIZE);
+//     void *p = mem_sbrk(newsize);
+//     if (p == (void *)-1)
+// 	return NULL;
+//     else {
+//         *(size_t *)p = size;
+//         return (void *)((char *)p + SIZE_T_SIZE);
+//     }
+// }
     size_t asize;
     size_t extendsize;
     char *bp;
 
-    // size 0인 경우 제외
     if (size == 0)
         return NULL;
-
-    // size를 조정해주기! header, footer를 위한 8바이트, 그리고 기본 2와드 이므로 8바이트
-    if (size <= DSIZE)
+    
+    //최소 16바이트 크기의 블록 구성
+    //8바이트는 정렬요건 만족시키기 위해
+    //추가적인 8바이트는 헤더와 풋터 오버헤드를 위해
+    if(size <= DSIZE)
         asize = 2 * DSIZE;
-    else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
+    else//8바이트 넘는 요청 : 오버헤드 바이트 내에 더해주고 인접 8의 배수로 반올림
+        asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
 
-    // find_fit 해서 적절한 곳에 메모리 심기
-    if ((bp = find_fit(asize)) != NULL)
-    {
+    //적절한 가용블록을 가용리스트에서 검색
+    if((bp == find_fit(asize)) != NULL){
         place(bp, asize);
+        //맞는 블록 찾으면 할당기는 요청한 블록 배치하고, 옵셥으로 초과부분을 분할
         return bp;
     }
-
-    // fit이 없다면
+    
+    // 힙을 새로운 가용부분으로 확장
     extendsize = MAX(asize, CHUNKSIZE);
-    if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
+    if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;
     place(bp, asize);
     return bp;
 }
+
 
 /*
  * mm_free - Freeing a block does nothing.
