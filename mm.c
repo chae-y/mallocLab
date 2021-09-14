@@ -24,11 +24,11 @@
  ********************************************************/
 team_t team = {
     /* Team name */
-    "ateam",
+    "4조",
     /* First member's full name */
-    "Harry Bovik",
+    "이채영",
     /* First member's email address */
-    "bovik@cs.cmu.edu",
+    "stat_chae0@",
     /* Second member's full name (leave blank if none) */
     "",
     /* Second member's email address (leave blank if none) */
@@ -63,11 +63,12 @@ ALIGN(size)는 주어진 size의 수에서 가장 가까운 ALIGNMENT 배�
 #define MAX(x,y) ((x) > (y) ? (x) : (y))
 
 #define PACK(size, alloc) ((size) | (alloc)) //size와 alloc(a)의 값을 한 word로 묶는다, 이를 이용하여 header와 footer에 쉽게 저장할 수 있다.
+                                            //블록은 8사이즈 단위이기 떄문에 가능
 
 #define GET(p) (*(unsigned int *)(p))  //포인터 p가 가리키는 곳에서 한 word값을 읽어온다
 #define PUT(p, val) (*(unsigned int *)(p)=(val)) //포인터 p가 가리키는 곳의 한 word의 값에 val를 기록한다
 
-#define GET_SIZE(p) (GET(p) & ~0x7) //포인터 p가 가리키는 곳에서 한 word를 읽은 다음 하위 3bit를 버린다 즈그 header에서 block사이즈를 읽는다
+#define GET_SIZE(p) (GET(p) & ~0x7) //포인터 p가 가리키는 곳에서 한 word를 읽은 다음 하위 3bit를 버린다. 즉 header에서 block사이즈를 읽는다
 #define GET_ALLOC(p) (GET(p) & 0x1)   //포인터 p가 가리키는 곳에서 한 word를 읽은 다음 최하위 1bit를 읽는다. 0이면 블록이 할당되어 있지 않고, 1이면 할당되었다는 의미
 
 #define HDRP(bp) ((char *)(bp) - WSIZE) //주어진 포인터 bp의 header의 주소를 계산한다
@@ -97,7 +98,7 @@ static void *coalesce(void *bp){
     
     if((PREV_BLKP(bp)< bp) && (bp <NEXT_BLKP(bp))){
         next_bp = (PREV_BLKP(bp));
-    }
+    } //next fit을 위해 필요함
 
     //case 1 : 이전블럭, 다음 블럭 최하위 bit 둘다 1 할당
     //블럭 병합없이 bp return
@@ -136,8 +137,6 @@ static void *coalesce(void *bp){
         //     next_bp = bp;
         // }
     }
-    // next_bp = bp;
-
     return bp;
 }
 
@@ -166,7 +165,7 @@ int mm_init(void)
 
     PUT(heap_listp, 0); 
     PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); // prologue header
-    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); // proloage footer
+    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); // prologue footer
     PUT(heap_listp + (3 * WSIZE), PACK(0, 1)); //epilogue header
     heap_listp += (2*WSIZE);
 
@@ -249,7 +248,7 @@ static char *find_fit(size_t asize){
                 best = bp;
                 i++;
                 if (i>3){
-                    // next_bp = best;
+                    next_bp = best;
                     return best;
                 }
             }
@@ -377,7 +376,7 @@ free(NULL)은 아무런 기능도 하지 않는다.
 */
 void mm_free(void *ptr){
 
-    // if(!ptr) return;
+    if(!ptr) return;
 
     size_t size = GET_SIZE(HDRP(ptr)); // ptr헤더에서 block사이즈를 읽어옴
 
