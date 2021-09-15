@@ -37,28 +37,28 @@ team_t team = {
 
 /* single word (4) or double word (8) alignment */
 /*
-ALIGNMENT 상수를 정의하고 있다. 더블 워드 크기(8bytes)를 정의하고 있다.
-이는 메모리 구조를 효율적으로 관리하기 위해서, 메모리 할당을 8의 배수로 할 수 있도록 한다.
+ALIGNMENT 상수를 정의하고 있다. 더블 워드 크기(8bytes)를 정의하고 있다.
+이는 메모리 구조를 효율적으로 관리하기 위해서, 메모리 할당을 8의 배수로 할 수 있도록 한다.
 */
 #define ALIGNMENT 8
 
 /* rounds up to the nearest multiple of ALIGNMENT */
 /*
-ALIGN(size)는 주어진 size의 수에서 가장 가까운 ALIGNMENT 배수 값으로 반올림 해준다. 
-즉, size의 수를 ALIGNMENT 배수로 바꿔 준다. 
-하위 3bit와 일치하지 않는 부분만을 반환해서 ALIGNMENT 크기를 맞춘다.
+ALIGN(size)는 주어진 size의 수에서 가장 가까운 ALIGNMENT 배수 값으로 반올림 해준다. 
+즉, size의 수를 ALIGNMENT 배수로 바꿔 준다. 
+하위 3bit와 일치하지 않는 부분만을 반환해서 ALIGNMENT 크기를 맞춘다.
 */
 #define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
 
 /*
-주어진 size_t의 크기만큼 정렬(ALIGN)하고, 이 값을 SIZE_T_SIZE로 정의한다.
+주어진 size_t의 크기만큼 정렬(ALIGN)하고, 이 값을 SIZE_T_SIZE로 정의한다.
 */
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 //가용리스트 조직을 위한 기본 상수 및 매크로
 #define WSIZE 4 //word와 헤더풋터사이즈
 #define DSIZE 8 //더블워드 사이즈
-#define CHUNKSIZE (1<<12) // 초기 힙 사이즈
+#define CHUNKSIZE (1<<6) // 초기 힙 사이즈
 
 #define MAX(x,y) ((x) > (y) ? (x) : (y))
 
@@ -77,19 +77,44 @@ ALIGN(size)는 주어진 size의 수에서 가장 가까운 ALIGNMENT 배�
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE))) //주어진 포인터 bp를 이용해서 다음 block의 주소를 얻어온다
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE))) //주어진 포인터 bp를 이용하서 이전의 block의 주소를 얻어온다
 
+#define PRED_LOC(bp) ((char *)HDRP(bp) + WSIZE) //주소
+#define SUCC_LOC(bp) ((char *)HDRP(bp) + DSIZE)
 
+#define PUT_ADDRESS(p, adress) (*(char **)(p) = (adress)) //주소 넣기
 
+#define PRED(bp) GET(PRED_LOC(bp)) //값
+#define SUCC(bp) GET(SUCC_LOC(bp))
 
 /* 
  * mm_init - initialize the malloc package.
  */
 /*
-초기 힙 영역을 할당하는 것과 같은 필요한 초기화를 수행해라. 
-초기화를 수행하는데 문제가 있으면 1을 반환해야 한다. 다른 경우에는 0을 반환한다.
-driver가 새로운 trace를 실행할 때마다, mm_init 함수를 호출함으로써 heap을 빈 heap으로 리셋시킨다.
+초기 힙 영역을 할당하는 것과 같은 필요한 초기화를 수행해라. 
+초기화를 수행하는데 문제가 있으면 1을 반환해야 한다. 다른 경우에는 0을 반환한다.
+driver가 새로운 trace를 실행할 때마다, mm_init 함수를 호출함으로써 heap을 빈 heap으로 리셋시킨다.
 */
 static char *heap_listp;
 static char *next_bp;
+int fit=NULL;
+
+//내가 빠지고 둘이 연결
+static void change(void *bp){
+    PUT_ADDRESS(SUCC_LOC(PRED(bp)), SUCC(bp));
+    if(SUCC(bp) != NULL){
+        PUT_ADDRESS(PRED_LOC(SUCC(bp)), PRED(bp));
+    }
+}
+
+//루트에 연결
+static void connect_root(void *bp){
+    PUT_ADDRESS(PRED_LOC(bp), heap_listp);
+    PUT_ADDRESS(SUCC_LOC(bp), SUCC(heap_listp));
+
+    if((void *)SUCC(heap_listp) != NULL){ //(void*) 해줘야할까?
+        PUT_ADDRESS(PRED_LOC(SUCC(heap_listp)), bp);
+    }
+     PUT_ADDRESS(SUCC_LOC(heap_listp), bp);
+}
 
 static void *coalesce(void *bp){
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // 이전 블록의 할당 여부 0 = no, 1 = yes
@@ -103,39 +128,47 @@ static void *coalesce(void *bp){
     //case 1 : 이전블럭, 다음 블럭 최하위 bit 둘다 1 할당
     //블럭 병합없이 bp return
     if (prev_alloc && next_alloc){
+        connect_root(bp);
         return bp;
     }
 
     //case 2 : 이전 블럭 최하위 bit 1(할당), 다음 블럭 최하위 bit 0(비할당)
     //다음 블럭과 병합한 뒤 bp return
     else if (prev_alloc && !next_alloc){
+        char *nxt_blkp = NEXT_BLKP(bp);
+        connect_root(bp);//나 연결해주고
+        change(nxt_blkp);//뒤에꺼 빼주기
+
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
+        
     }
 
     //case 3 : 아전 블럭 최하위 bit0, 다음 블럭 최하위 bit 1
     //이전 블럭과 병합한 뒤 새로운 bp return 병합한 뒤 새로운 
     else if (!prev_alloc && next_alloc){
-        // if(bp == next_bp){
-        //     next_bp = PREV_BLKP(bp);
-        // }
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
+        change(bp);//앞에꺼 빼고
+        connect_root(bp);//다시 넣기
     }
     
     //case 4 : 이전 블럭 최하위 bit 0, 다음 블럭 최하위 bit 0 
     //이전 블럭, 현재블럭, 다음블럭 모두 병합한 뒤 새로운 bp return
     else{
+        char *old_next = NEXT_BLKP(bp);
+
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
-        // if(bp == next_bp){
-        //     next_bp = bp;
-        // }
+
+        change(bp);//앞에 빼고
+        change(old_next);//뒤에 빼고
+        connect_root(bp);//새로 넣기
     }
     return bp;
 }
@@ -160,13 +193,16 @@ static void *extend_heap(size_t words){
 int mm_init(void)
 {   
     //메모리 시스템에서 4워드를 가져와서 빈 가용리스트를 만들 수 있도록 초기화
-    if((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
+    //+succ+pred  = 6
+    if((heap_listp = mem_sbrk(6*WSIZE)) == (void *)-1)
         return -1;
 
     PUT(heap_listp, 0); 
-    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); // prologue header
-    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); // prologue footer
-    PUT(heap_listp + (3 * WSIZE), PACK(0, 1)); //epilogue header
+    PUT(heap_listp + (1 * WSIZE), PACK(2 * DSIZE, 1)); // prologue header
+    PUT_ADDRESS(heap_listp + (2 * WSIZE), NULL); //succ
+    PUT_ADDRESS(heap_listp + (3 * WSIZE), NULL); //pred
+    PUT(heap_listp + (4 * WSIZE), PACK(2 *DSIZE, 1)); // prologue footer
+    PUT(heap_listp + (5 * WSIZE), PACK(0, 1)); //epilogue header
     heap_listp += (2*WSIZE);
 
     //힙을 chunksize바이트로 확장하고, 초기 가용블록을 생성
@@ -174,6 +210,8 @@ int mm_init(void)
         return -1;
 
     next_bp = heap_listp; //next fit을 위한 것
+
+    PUT_ADDRESS(SUCC_LOC(heap_listp), NEXT_BLKP(heap_listp));
 
     return 0;
 }
@@ -188,46 +226,58 @@ static void place(void *bp, size_t asize){
         //새롭게 할당 된 블록을 배치
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
+
+        //자기꺼를 뒤에 분리된거에 옮겨줌
+        PUT_ADDRESS(SUCC_LOC(NEXT_BLKP(bp)), SUCC(bp));
+        PUT_ADDRESS(PRED_LOC(NEXT_BLKP(bp)), PRED(bp));
+        PUT_ADDRESS(SUCC_LOC((PRED(bp))), NEXT_BLKP(bp));
+        if (SUCC(bp) != NULL)
+            PUT_ADDRESS(PRED_LOC(SUCC(bp)), NEXT_BLKP(bp));
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize - asize, 0));
         PUT(FTRP(bp), PACK(csize - asize, 0));
     }
     else{//같은 경우에는 전체를 할당
+        change(bp);
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
     }
 }
 
-static char *find_fit(size_t asize){
+static char *first_fit(size_t asize){
     char *bp;
     
-    // //1. first fit
-    // for (bp = heap_listp ; GET_SIZE(HDRP(bp))>0 ; bp = NEXT_BLKP(bp)){
-    //     if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
-    //         return bp;
-    // }
+    for (bp = heap_listp ; GET_SIZE(HDRP(bp))>0 ; bp = NEXT_BLKP(bp)){
+        if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
+            return bp;
+    }
 
-    // return NULL; //맞는게 없음
+    return NULL; //맞는게 없음
+}
 
-    // 2. next fit
-    // bp = next_bp;
-    // while(1){
-    //     if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){//할당가능
-    //         next_bp = bp;
-    //         return next_bp;
-    //     }
-    //     bp = NEXT_BLKP(bp);
-    //     if(GET_SIZE(HDRP(bp)) == 0){//에필로그 만나면 처음으로
-    //         bp = heap_listp;
-    //     }
-    //     if(bp == next_bp){//존재 안함
-    //         return NULL;
-    //     }
-    // }
+static char *next_fit(size_t asize){
+    char *bp = next_bp;
+   
+    while(1){
+        if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){//할당가능
+            next_bp = bp;
+            return next_bp;
+        }
+        bp = NEXT_BLKP(bp);
+        if(GET_SIZE(HDRP(bp)) == 0){//에필로그 만나면 처음으로
+            bp = heap_listp;
+        }
+        if(bp == next_bp){//존재 안함
+            return NULL;
+        }
+    }
     
-    // return NULL;
+    return NULL;
+}
 
-    bp = next_bp;
+//best+next
+static char *nextbest_fit(size_t asize){
+    char *bp = next_bp;
     char *best;
     size_t best_size = NULL;
     int i = 0;
@@ -267,58 +317,104 @@ static char *find_fit(size_t asize){
     }
 
     return NULL;
-
-    // 3. best fit
-    // char *best;
-    // size_t best_size = NULL;
-    // for (bp = heap_listp ; GET_SIZE(HDRP(bp))>0 ; bp = NEXT_BLKP(bp)){
-    //     size_t new_size = GET_SIZE(HDRP(bp));
-    //     if(!GET_ALLOC(HDRP(bp)) && (asize <= new_size)){
-    //         if (best_size == NULL){
-    //             best_size = new_size;
-    //             best = bp;
-    //         }
-    //         else if (best_size > new_size){
-    //             best_size = new_size;
-    //             best = bp;
-    //         }
-    //     }
-    // }
-    // if (best_size == NULL){
-    //     return NULL;
-    // }else    return best;
-
-    // // 4. worst fit
-
-    // char *worst;
-    // size_t worst_size = NULL;
-    // for (bp = heap_listp ; GET_SIZE(HDRP(bp))>0 ; bp = NEXT_BLKP(bp)){
-    //     size_t new_size = GET_SIZE(HDRP(bp));
-    //     if(!GET_ALLOC(HDRP(bp)) && (asize <= new_size)){
-    //         if (worst_size == NULL){
-    //             worst_size = new_size;
-    //             worst = bp;
-    //         }
-    //         else if (worst_size > new_size){
-    //             worst_size = new_size;
-    //             worst = bp;
-    //         }
-    //     }
-    // }
-    // if (worst_size == NULL){
-    //     return NULL;
-    // }else    return worst;
 }
+static char *best_fit(size_t asize){
+    char *bp;
+    char *best;
+    int i = 0;
+    size_t best_size = NULL;
+    for (bp = heap_listp ; GET_SIZE(HDRP(bp))>0 ; bp = NEXT_BLKP(bp)){
+        size_t new_size = GET_SIZE(HDRP(bp));
+        if(!GET_ALLOC(HDRP(bp)) && (asize <= new_size)){
+            if (best_size == NULL){
+                best_size = new_size;
+                best = bp;
+            }
+            else if (best_size > new_size){
+                best_size = new_size;
+                best = bp;
+                i++;
+                if(i>3) return best;
+            }
+        }
+    }
+    if (best_size == NULL){
+        return NULL;
+    }else    return best;
+}
+
+static char *worst_fit(size_t asize){
+    char *bp;
+    char *worst;
+    size_t worst_size = NULL;
+    for (bp = heap_listp ; GET_SIZE(HDRP(bp))>0 ; bp = NEXT_BLKP(bp)){
+        size_t new_size = GET_SIZE(HDRP(bp));
+        if(!GET_ALLOC(HDRP(bp)) && (asize <= new_size)){
+            if (worst_size == NULL){
+                worst_size = new_size;
+                worst = bp;
+            }
+            else if (worst_size > new_size){
+                worst_size = new_size;
+                worst = bp;
+            }
+        }
+    }
+    if (worst_size == NULL){
+        return NULL;
+    }else    return worst;
+}
+
+static char *explicit_fit(size_t asize){
+    char *bp = heap_listp;
+    while (1)
+    {
+        bp = SUCC(bp);
+        if (bp == NULL)
+            break;
+        if (GET_SIZE(HDRP(bp)) >= asize && !GET_ALLOC(HDRP(bp)))
+        {
+            return bp;
+        }
+    }
+    return NULL;
+}
+
+//explicit+best
+static char *exbest_fit(size_t asize){
+    char *bp = heap_listp;
+    char *best;
+    size_t best_size = NULL;
+
+    for (bp = SUCC(bp); bp!=NULL ; bp = SUCC(bp)){
+        size_t new_size = GET_SIZE(HDRP(bp));
+        if(!GET_ALLOC(HDRP(bp)) && (asize <= new_size)){
+            if (best_size == NULL){
+                best_size = new_size;
+                best = bp;
+            }
+            else if (best_size > new_size){
+                best_size = new_size;
+                best = bp;
+            }
+        }
+    }
+    if (best_size == NULL){
+        return NULL;
+    }else    return best;
+    return NULL;
+}
+
 
 /* 
  * mm_malloc - Allocate a block by incrementing the brk pointer.
  *     Always allocate a block whose size is a multiple of the alignment.
  */
 /*
-malloc 함수는 최소의 데이터 크기가 할당된 블록의 포인터를 반환한다. 
-할당된 블록 전체는 heap 영역에 있어야 하며, 할당된 다른 공간과 overlap 되어서는 안 된다.
-표준 c 라이브러리 malloc 은 항상 8바이트로 정렬된 payload 포인터를 반환하므로, 
-마찬가지로 구현된 malloc도 항상 8바이트로 정렬된 포인터를 반환해야 한다.
+malloc 함수는 최소의 데이터 크기가 할당된 블록의 포인터를 반환한다. 
+할당된 블록 전체는 heap 영역에 있어야 하며, 할당된 다른 공간과 overlap 되어서는 안 된다.
+표준 c 라이브러리 malloc 은 항상 8바이트로 정렬된 payload 포인터를 반환하므로, 
+마찬가지로 구현된 malloc도 항상 8바이트로 정렬된 포인터를 반환해야 한다.
 */
 void *mm_malloc(size_t size){
 // {
@@ -345,13 +441,49 @@ void *mm_malloc(size_t size){
         asize = 2 * DSIZE;
     else//8바이트 넘는 요청 : 오버헤드 바이트 내에 더해주고 인접 8의 배수로 반올림
         asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
-
+    
+    if(fit == NULL){
+        printf("어떤 fit을 적용할까요?\n");
+        printf("1. first fit\n");
+        printf("2. next fit\n");
+        printf("3. best fit\n");
+        printf("4. next + bext fit\n");
+        printf("5. worst fit\n");
+        printf("6. explicit fit\n");
+        printf("7. explicit + best fit\n");
+        printf("번호를 입력하세요 : ");
+        scanf("%d",&fit);
+    }
     //적절한 가용블록을 가용리스트에서 검색
-
-    if((bp = find_fit(asize)) != NULL){
-        place(bp, asize);
-        // next_bp = bp;
+    switch(fit){
+        case 1: //61점
+            bp = first_fit(asize);
+            break;
+        case 2: //57점
+            bp = next_fit(asize);
+            break;
+        case 3: //60점
+            bp = best_fit(asize);
+            break;
+        case 4: //62점
+            bp = nextbest_fit(asize);
+            break;
+        case 5: //60점
+            bp = worst_fit(asize);
+            break;
+        case 6: //85점
+            bp = explicit_fit(asize);
+            break;
+        case 7: //87점
+            bp = exbest_fit(asize);
+            break;
+        default:
+            printf("숫자 잘 못 입력되었습니다.\n종료합니다.\n");
+            exit(0);
+    }
+    if(bp != NULL){
         //맞는 블록 찾으면 할당기는 요청한 블록 배치하고, 옵셥으로 초과부분을 분할
+        place(bp, asize);
         return bp;
     }
     
@@ -368,11 +500,11 @@ void *mm_malloc(size_t size){
  * mm_free - Freeing a block does nothing.
  */
 /*
-free 함수는 ptr이 가리키는 블록을 가용공간으로 만든다. 
-이 함수는 아무것도 반환하지 않는다. 
-malloc, calloc, realloc 함수에 의해 반환되어진 포인터이면서 
-free에 의해 호출되어지지 않은 인자를 넘겨받아야만 free함수는 함수 기능을 실행한다.
-free(NULL)은 아무런 기능도 하지 않는다.
+free 함수는 ptr이 가리키는 블록을 가용공간으로 만든다. 
+이 함수는 아무것도 반환하지 않는다. 
+malloc, calloc, realloc 함수에 의해 반환되어진 포인터이면서 
+free에 의해 호출되어지지 않은 인자를 넘겨받아야만 free함수는 함수 기능을 실행한다.
+free(NULL)은 아무런 기능도 하지 않는다.
 */
 void mm_free(void *ptr){
 
@@ -391,16 +523,16 @@ void mm_free(void *ptr){
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
 /*
-realloc 함수는 다음의 제약들을 가지는 최소 바이트로 할당된 공간의 포인터를 반환한다.
-	- if ptr is NULL, malloc(size)와 동일하다.
-	- if size is equal to zero, free(ptr)과 동일하며 NULL을 반환해야 한다.
-	- if ptr is not NULL, 이것은 malloc 또는 realloc에 의해 반환되어진 값이며,
-     아직 free함수가 호출된 경우가 아니다. realloc 함수의 호출은 ptr에 의해 가리켜지는 	
-     메모리 블록의 사이즈를 size 바이트로 바꾸고, 새로운 블록의 주소를 반환한다. 
-     구현하는 방법, old block의 내부 단편화의 양, 요구되는 크기에 따라, 
-     새로운 블록의 주소공간은 old block 과 같을 수도 있고, 다를 수도 있다. 
-     new block의 내용은 old size와 new size 중 작은 크기 까지는 old block의 내용과 같다. 
-     다른 것들은 초기화 되어 있지 않다.
+realloc 함수는 다음의 제약들을 가지는 최소 바이트로 할당된 공간의 포인터를 반환한다.
+	- if ptr is NULL, malloc(size)와 동일하다.
+	- if size is equal to zero, free(ptr)과 동일하며 NULL을 반환해야 한다.
+	- if ptr is not NULL, 이것은 malloc 또는 realloc에 의해 반환되어진 값이며,
+     아직 free함수가 호출된 경우가 아니다. realloc 함수의 호출은 ptr에 의해 가리켜지는 	
+     메모리 블록의 사이즈를 size 바이트로 바꾸고, 새로운 블록의 주소를 반환한다. 
+     구현하는 방법, old block의 내부 단편화의 양, 요구되는 크기에 따라, 
+     새로운 블록의 주소공간은 old block 과 같을 수도 있고, 다를 수도 있다. 
+     new block의 내용은 old size와 new size 중 작은 크기 까지는 old block의 내용과 같다. 
+     다른 것들은 초기화 되어 있지 않다.
 */
 void *mm_realloc(void *ptr, size_t size){
     void *oldptr = ptr;
