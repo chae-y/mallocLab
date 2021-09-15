@@ -192,6 +192,20 @@ static void *extend_heap(size_t words){
 
 int mm_init(void)
 {   
+    
+    if(fit == NULL){
+        printf("어떤 fit을 적용할까요?\n");
+        printf("1. first fit\n");
+        printf("2. next fit\n");
+        printf("3. best fit\n");
+        printf("4. next + bext fit\n");
+        printf("5. worst fit\n");
+        printf("6. explicit fit\n");
+        printf("7. explicit + best fit\n");
+        printf("번호를 입력하세요 : ");
+        scanf("%d", &fit);
+    }
+
     //메모리 시스템에서 4워드를 가져와서 빈 가용리스트를 만들 수 있도록 초기화
     //+succ+pred  = 6
     if((heap_listp = mem_sbrk(6*WSIZE)) == (void *)-1)
@@ -442,18 +456,6 @@ void *mm_malloc(size_t size){
     else//8바이트 넘는 요청 : 오버헤드 바이트 내에 더해주고 인접 8의 배수로 반올림
         asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
     
-    if(fit == NULL){
-        printf("어떤 fit을 적용할까요?\n");
-        printf("1. first fit\n");
-        printf("2. next fit\n");
-        printf("3. best fit\n");
-        printf("4. next + bext fit\n");
-        printf("5. worst fit\n");
-        printf("6. explicit fit\n");
-        printf("7. explicit + best fit\n");
-        printf("번호를 입력하세요 : ");
-        scanf("%d",&fit);
-    }
     //적절한 가용블록을 가용리스트에서 검색
     switch(fit){
         case 1: //61점
